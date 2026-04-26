@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from collections import deque
 
 class AnimatedCameraHistogram:
     def __init__(self):
@@ -20,7 +21,9 @@ class AnimatedCameraHistogram:
         height, width = frame.shape[:2]
         print(f"摄像头分辨率: {width}x{height}")  # 调试信息
 
-        self.fig, (self.ax_cam, self.ax_cam_gray,self.ax_cam_threshBIO,self.ax_cam_threshOtus,self.ax_hist) = plt.subplots(1, 5, figsize=(12, 5))
+        self.fig, ax = plt.subplots(2,3, figsize=(12, 5))
+        (self.ax_cam, self.ax_cam_gray,self.ax_cam_threshBIO,self.ax_cam_threshOtus,self.ax_hist,self.ax_thresh)=ax.flatten()
+
         self.img_display = self.ax_cam.imshow(np.zeros((480, 640, 3)), animated=True)
         self.ax_cam.set_title('Camera')
         self.ax_cam.axis('off')
@@ -49,10 +52,25 @@ class AnimatedCameraHistogram:
         self.stats_text = self.ax_hist.text(0.02, 0.98, '', 
                                           transform=self.ax_hist.transAxes, 
                                           verticalalignment='top',
+                                          bbox=dict(boxstyle='round', facecolor='white', alpha=0.1),
+                                          animated=True)
+        
+        self.threshtext = self.ax_hist.text(0.02, 0.98, '', 
+                                          transform=self.ax_thresh.transAxes, 
+                                          verticalalignment='top',
                                           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
                                           animated=True)
 
+        self.ax_thresh.set_title('Real-time Single Line Plot', fontsize=14)
+        self.ax_thresh.set_xlabel('Time')
+        self.ax_thresh.set_ylabel('Value')
+        self.ax_thresh.grid(True, alpha=0.3)
+        self.line, = self.ax_thresh.plot([], [], label='Live Data', color='blue', linewidth=2)
+        
         self.current_frame = None
+
+        self.max_points = 100
+        self.data_queue = deque(maxlen=self.max_points)
 
     def update_frame(self, frame_num):
         ret, frame = self.cap.read()
@@ -76,30 +94,40 @@ class AnimatedCameraHistogram:
             self.img_display_threshBIO.set_clim(vmin=threshBIO.min(), vmax=threshBIO.max())
 
             thresh, threshOtus = cv2.threshold(gray, 0, 255, cv2.THRESH_OTSU)
-            print(f"Otsu's threshold: {thresh}")
+            #print(f"Otsu's threshold: {thresh}")
             self.img_display_threshOtus.set_array(threshOtus)
             self.img_display_threshOtus.set_clim(vmin=threshOtus.min(), vmax=threshOtus.max())
+            
+            self.data_queue.append(thresh)
+            x_data = list(range(len(self.data_queue)))
+            y_data = list(self.data_queue)
+            self.line.set_data(x_data, y_data)
+            self.ax_thresh.set_ylim(-10,270)
+            current_max_x = max(x_data) 
+            self.ax_thresh.set_xlim(max(0, current_max_x - self.max_points), max(self.max_points, current_max_x + 1))
+            self.ax_thresh.set_xticks([])
+            threshstr = f'threshold: {thresh}'
+            self.threshtext.set_text(threshstr)
+
+            
 
             hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-
             self.hist_line.set_data(range(256), hist)
-
             max_val = max(hist) if len(hist) > 0 else 1000
             self.ax_hist.set_ylim(0, max_val * 1.1)
-
             mean_brightness = np.mean(gray)
             std_brightness = np.std(gray)
             stats_str = f'Average brightness: {mean_brightness:.1f}\nStandard deviation: {std_brightness:.1f}\nBrightness: {np.max(gray)}\nDarkest: {np.min(gray)}'
             self.stats_text.set_text(stats_str)
 
-        return [self.img_display, self.img_display_gray,self.img_display_threshBIO,self.img_display_threshOtus,self.hist_line, self.stats_text]
+        return [self.img_display, self.img_display_gray,self.img_display_threshBIO,self.img_display_threshOtus,self.hist_line, self.stats_text,self.line,self.threshtext]
 
     def run(self):
         print("按关闭窗口或Ctrl+C停止程序")
 
         ani = animation.FuncAnimation(
             self.fig, self.update_frame,
-            interval=50,
+            interval=20,
             blit=True,
             cache_frame_data=False,
             repeat=False
